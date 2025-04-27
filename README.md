@@ -12,5 +12,5 @@
 iOS设备请先获取快捷指令:https://www.icloud.com/shortcuts/e81c3f95d4b8416e9e0ae3c0ace2457f  
 7.获取后，在文件App中找到ics文件，选择分享，在菜单中选择ICS To Canlendar。  
 8.弹出浏览器后，会提示导入，建议新建一个日历，并将文件导入至该日历中。  
-9榜15便士
+9榜15便士  
 10.All done! 可以试试明天会不会提醒你上课。

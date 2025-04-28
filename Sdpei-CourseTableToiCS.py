@@ -1,6 +1,10 @@
 import time
 import json
 import uuid
+import logging
+import sys
+import traceback
+from chinese_calendar import is_holiday
 from datetime import datetime, timedelta
 from datetime import timezone
 from bs4 import BeautifulSoup
@@ -11,35 +15,25 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.edge.options import Options
 from selenium.webdriver.edge.service import Service
 from webdriver_manager.microsoft import EdgeChromiumDriverManager
-# 给出所需的url
-url_login_page = "https://jw.sdpei.edu.cn"
-url_kebiao_page = "https://jw.sdpei.edu.cn/Student/CourseTimetable/MyCourseTimeTable.aspx"
-# 启动Edge驱动，开始模拟
-options = Options()
-options.add_argument("--headless")  # 最大化窗口
-options.add_argument("--disable-images")  # 禁用图片加载提高速度
-options.add_experimental_option("detach", True)  # 保持浏览器打开
-# 初始化浏览器
-driver = webdriver.Edge(service=Service(EdgeChromiumDriverManager().install()), options=options)
-print("正在访问教务系统...")
-driver.get(url_login_page)
-# 自动输入账号密码
-username = input("请输入学号: ")
-password = input("请输入密码: ")
-driver.find_element(By.ID, "txtUserName").send_keys(username)
-driver.find_element(By.ID, "txtPassword").send_keys(password)
-# 找到并点击登录按钮，实现登录
-print("正在登录...")
-login_button = driver.find_element(By.ID, "mlbActive")
-actions = ActionChains(driver)
-actions.key_down(Keys.CONTROL).click(login_button).key_up(Keys.CONTROL).perform()
-# 等待新窗口打开
-time.sleep(2)
-driver.switch_to.window(driver.window_handles[-1])
 
-# 直接访问成绩查询页面
-print("正在访问个人课表页面...")
-driver.get(url_kebiao_page)
+# 配置日志
+logging.basicConfig(filename='error_log.txt', level=logging.ERROR)
+
+
+def uid():
+    """生成唯一标识符"""
+    return str(uuid.uuid4())
+
+
+def format_building_name(building_name):
+    """将原始建筑名称格式化为正确名称"""
+    # 处理常见前缀，如"济-"
+    if building_name.startswith("济-"):
+        # 从"济-"后面提取楼号部分
+        building_number = building_name[2:]
+        return f"山东体育学院{building_number}"
+    # 可以添加其他前缀的处理逻辑
+    return building_name
 
 
 def save_courses_to_json(courses, filename='courses.json'):
@@ -74,6 +68,8 @@ def save_courses_to_json(courses, filename='courses.json'):
         json.dump(formatted_courses, f, ensure_ascii=False, indent=4)
 
     print(f"课表信息已保存到JSON文件: {filename}")
+
+
 def get_course_table_html(driver):
     """获取课表HTML内容，处理可能的iframe情况"""
     try:
@@ -232,13 +228,8 @@ def save_courses_to_file(courses, filename='courses.txt'):
     print(f"课表信息已保存到文件: {filename}")
 
 
-def uid():
-    """生成唯一标识符"""
-    return str(uuid.uuid4())
-
-
 def generate_ics_from_json(json_file, first_week_date=None, alarm_minutes=30):
-    """从JSON课表文件生成iCS日历文件
+    """从JSON课表文件生成iCS日历文件，并排除法定节假日
 
     参数：
         json_file: JSON课表文件路径
@@ -348,6 +339,30 @@ END:VTIMEZONE
 
                 first_time_obj = initial_time + timedelta(days=delta_time)
 
+                # 计算所有可能上课的日期，并检查哪些是节假日
+                exclude_dates = []
+                for week_num in range(start_week, end_week + 1):
+                    # 根据单双周情况判断是否需要排除
+                    if week_status == 1 and week_num % 2 == 0:  # 单周，跳过双周
+                        continue
+                    elif week_status == 2 and week_num % 2 == 1:  # 双周，跳过单周
+                        continue
+
+                    # 计算这一周的上课日期
+                    week_delta = week_num - start_week
+                    class_date = first_time_obj + timedelta(days=7 * week_delta)
+
+                    # 检查是否为法定节假日
+                    if is_holiday(class_date):
+                        # 生成EXDATE格式的日期字符串
+                        exclude_date = class_date.strftime("%Y%m%dT") + class_timetable[str(sections[0])]["startTime"]
+                        exclude_dates.append(exclude_date)
+
+                # 构建EXDATE属性
+                exdate_str = ""
+                if exclude_dates:
+                    exdate_str = "EXDATE;TZID=Asia/Shanghai:" + ",".join(exclude_dates) + "\n"
+
                 if week_status == 0:  # 每周
                     extra_status = "1"
                 else:
@@ -378,7 +393,7 @@ END:VALARM
                 else:
                     _alarm_base = ""
 
-                # 生成事件内容
+                # 生成事件内容，添加EXDATE排除节假日
                 _ical_base = f'''BEGIN:VEVENT
 CREATED:{utc_now}
 DTSTAMP:{utc_now}
@@ -388,7 +403,7 @@ LOCATION:{course['position']}
 TZID:Asia/Shanghai
 SEQUENCE:0
 UID:{uid()}
-RRULE:FREQ=WEEKLY;UNTIL={stop_time_str};INTERVAL={extra_status}
+{exdate_str}RRULE:FREQ=WEEKLY;UNTIL={stop_time_str};INTERVAL={extra_status}
 DTSTART;TZID=Asia/Shanghai:{final_stime_str}
 DTEND;TZID=Asia/Shanghai:{final_etime_str}
 X-APPLE-TRAVEL-ADVISORY-BEHAVIOR:AUTOMATIC
@@ -405,68 +420,129 @@ X-APPLE-TRAVEL-ADVISORY-BEHAVIOR:AUTOMATIC
 
     print(f"日历文件已生成: {output_file}")
     return output_file
-def format_building_name(building_name):
-    """将原始建筑名称格式化为正确名称"""
-    # 处理常见前缀，如"济-"
-    if building_name.startswith("济-"):
-        # 从"济-"后面提取楼号部分
-        building_number = building_name[2:]
-        return f"山东体育学院{building_number}"
-    # 可以添加其他前缀的处理逻辑
-    return building_name
-# 主流程执行
-print("正在获取课表信息...")
-html_content = get_course_table_html(driver)
 
-if html_content:
-    print("获取到页面内容，尝试解析...")
 
-    # 保存原始HTML以便调试
-    with open("raw_table.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
-    print("原始HTML已保存到raw_table.html")
-
+def main():
+    """主函数，整合所有功能"""
     try:
-        courses = parse_course_info(html_content)
+        print("正在初始化浏览器...")
 
-        if courses:
-            print(f"共解析到 {len(courses)} 门课程")
-            format_and_display_courses(courses)
+        # 给出所需的url
+        url_login_page = "https://jw.sdpei.edu.cn"
+        url_kebiao_page = "https://jw.sdpei.edu.cn/Student/CourseTimetable/MyCourseTimeTable.aspx"
 
-            # 询问用户选择保存格式
-            save_option = input("是否保存课表? (y/n): ")
-            if save_option.lower() == 'y':
-                format_option = input("选择保存格式 (1: TXT, 2: JSON, 3: iCS日历文件, 默认JSON): ") or "2"
+        # 启动Edge驱动，开始模拟
+        options = Options()
+        options.add_argument("--headless")
+        options.add_argument("--disable-images")  # 禁用图片加载提高速度
+        options.add_experimental_option("detach", True)  # 保持浏览器打开
 
-                if format_option == "1":
-                    filename = input("输入文件名 (默认为 courses.txt): ") or "courses.txt"
-                    save_courses_to_file(courses, filename)
-                elif format_option == "3":
-                    # 先保存为JSON
-                    json_filename = "temp_courses.json"
-                    save_courses_to_json(courses, json_filename)
-                    # 询问第一周日期
-                    first_week = input("请输入第一周周一的日期 (格式:YYYYMMDD，如20230904): ")
-                    # 询问是否需要提醒
-                    need_alarm = input("是否需要课前提醒? (y/n): ").lower() == 'y'
-                    alarm_minutes = 30
-                    if need_alarm:
-                        try:
-                            alarm_minutes = int(input("请输入提前提醒的分钟数 (默认30): ") or "30")
-                        except ValueError:
-                            print("输入错误，使用默认值30分钟")
+        # 初始化浏览器
+        driver = None
+        try:
+            driver = webdriver.Edge(service=Service(EdgeChromiumDriverManager().install()), options=options)
+        except Exception as e:
+            print(f"初始化完成: {e}")
+            print("请重新打开该程序")
+            input("按回车键退出...")
+            return
+
+        print("正在访问教务系统...")
+        driver.get(url_login_page)
+
+        # 自动输入账号密码
+        username = input("请输入学号: ")
+        password = input("请输入密码: ")
+        driver.find_element(By.ID, "txtUserName").send_keys(username)
+        driver.find_element(By.ID, "txtPassword").send_keys(password)
+
+        # 找到并点击登录按钮，实现登录
+        print("正在登录...")
+        login_button = driver.find_element(By.ID, "mlbActive")
+        actions = ActionChains(driver)
+        actions.key_down(Keys.CONTROL).click(login_button).key_up(Keys.CONTROL).perform()
+
+        # 等待新窗口打开
+        time.sleep(2)
+        driver.switch_to.window(driver.window_handles[-1])
+
+        # 直接访问成绩查询页面
+        print("正在访问个人课表页面...")
+        driver.get(url_kebiao_page)
+
+        print("正在获取课表信息...")
+        html_content = get_course_table_html(driver)
+
+        if html_content:
+            print("获取到页面内容，尝试解析...")
+
+            # 保存原始HTML以便调试
+            with open("raw_table.html", "w", encoding="utf-8") as f:
+                f.write(html_content)
+            print("原始HTML已保存到raw_table.html")
+
+            try:
+                courses = parse_course_info(html_content)
+
+                if courses:
+                    print(f"共解析到 {len(courses)} 门课程")
+                    format_and_display_courses(courses)
+
+                    # 询问用户选择保存格式
+                    save_option = input("是否保存课表? (y/n): ")
+                    if save_option.lower() == 'y':
+                        format_option = input("选择保存格式 (1: TXT, 2: JSON, 3: iCS日历文件, 默认JSON): ") or "2"
+
+                        if format_option == "1":
+                            filename = input("输入文件名 (默认为 courses.txt): ") or "courses.txt"
+                            save_courses_to_file(courses, filename)
+                        elif format_option == "3":
+                            # 先保存为JSON
+                            json_filename = "temp_courses.json"
+                            save_courses_to_json(courses, json_filename)
+                            # 询问第一周日期
+                            first_week = input("请输入第一周周一的日期 (格式:YYYYMMDD，如20230904): ")
+                            # 询问是否需要提醒
+                            need_alarm = input("是否需要课前提醒? (y/n): ").lower() == 'y'
                             alarm_minutes = 30
-                    else:
-                        alarm_minutes = 0
-                    # 生成iCS文件
-                    ics_file = generate_ics_from_json(json_filename, first_week, alarm_minutes)
-                    if ics_file:
-                        print(f"iCS日历文件已生成: {ics_file}")
-                        print("您可以将此文件导入到手机或电脑的日历应用中")
+                            if need_alarm:
+                                try:
+                                    alarm_minutes = int(input("请输入提前提醒的分钟数 (默认30): ") or "30")
+                                except ValueError:
+                                    print("输入错误，使用默认值30分钟")
+                                    alarm_minutes = 30
+                            else:
+                                alarm_minutes = 0
+                            # 生成iCS文件
+                            ics_file = generate_ics_from_json(json_filename, first_week, alarm_minutes)
+                            if ics_file:
+                                print(f"iCS日历文件已生成: {ics_file}")
+                                print("您可以将此文件导入到手机或电脑的日历应用中")
+                        else:
+                            filename = input("输入文件名 (默认为 courses.json): ") or "courses.json"
+                            save_courses_to_json(courses, filename)
                 else:
-                    filename = input("输入文件名 (默认为 courses.json): ") or "courses.json"
-                    save_courses_to_json(courses, filename)
+                    print("未能解析出课程信息，请检查页面内容")
+
+            except Exception as e:
+                print(f"解析课表时出错: {e}")
+                logging.error(f"解析课表时出错: {e}")
+                logging.error(traceback.format_exc())
+        else:
+            print("获取课表失败，请检查网络连接或登录状态")
+
+        # 关闭浏览器
+        if driver:
+            driver.quit()
+
     except Exception as e:
-        print(f"解析课表时出错: {e}")
-else:
-    print("获取课表失败，请检查网络连接或登录状态")
+        print(f"程序运行出错: {e}")
+        logging.error(f"程序运行出错: {e}")
+        logging.error(traceback.format_exc())
+
+    # 防止程序立即关闭
+    input("\n程序执行完毕，按回车键退出...")
+
+
+if __name__ == "__main__":
+    main()

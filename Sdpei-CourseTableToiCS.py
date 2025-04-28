@@ -53,6 +53,9 @@ def save_courses_to_json(courses, filename='courses.json'):
         sections_str = f"第{course['sections'][0]}-{course['sections'][1] - 1}节"
         weeks_str = f"第{','.join(str(w) for w in course['weeks'])}周"
 
+        # 修改位置信息的格式化方式，将\n替换为-
+        position = course['position'].replace("\n", "-")
+
         formatted_course = {
             "name": course['name'],
             "teacher": course['teacher'],
@@ -60,7 +63,7 @@ def save_courses_to_json(courses, filename='courses.json'):
             "sections": sections_str,
             "weeks": weeks_str,
             "weeks_array": course['weeks'],
-            "position": course['position'],
+            "position": position,
             "day": course['day'],
             "section_array": course['sections']
         }

@@ -38,13 +38,13 @@ def format_building_name(building_name):
 
 def save_courses_to_json(courses, filename='courses.json'):
     """将课程信息保存为JSON格式"""
-    # 将课程信息结构化为JSON友好格式
     formatted_courses = []
     weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
     for course in courses:
         day_name = weekdays[course['day'] - 1] if 1 <= course['day'] <= 7 else f"星期{course['day']}"
-        sections_str = f"第{course['sections'][0]}-{course['sections'][1] - 1}节"
+        # 修改这行，正确显示节次范围
+        sections_str = f"第{course['sections'][0]}-{course['sections'][1]}节"
         weeks_str = f"第{','.join(str(w) for w in course['weeks'])}周"
 
         # 修改位置信息的格式化方式，将\n替换为-
@@ -193,7 +193,8 @@ def format_and_display_courses(courses):
     print("\n===== 课表信息 =====")
     for course in courses:
         day_name = weekdays[course['day'] - 1] if 1 <= course['day'] <= 7 else f"星期{course['day']}"
-        sections_str = f"第{course['sections'][0]}-{course['sections'][1] - 1}节"
+        # 修改这行，正确显示节次范围
+        sections_str = f"第{course['sections'][0]}-{course['sections'][1]}节"
         weeks_str = f"第{','.join(str(w) for w in course['weeks'])}周"
 
         print(f"\n课程: {course['name']}")
@@ -214,7 +215,7 @@ def save_courses_to_file(courses, filename='courses.txt'):
 
         for course in courses:
             day_name = weekdays[course['day'] - 1] if 1 <= course['day'] <= 7 else f"星期{course['day']}"
-            sections_str = f"第{course['sections'][0]}-{course['sections'][1] - 1}节"
+            sections_str = f"第{course['sections'][0]}-{course['sections'][1]}节"
             weeks_str = f"第{','.join(str(w) for w in course['weeks'])}周"
 
             f.write(f"\n课程: {course['name']}\n")
@@ -229,13 +230,7 @@ def save_courses_to_file(courses, filename='courses.txt'):
 
 
 def generate_ics_from_json(json_file, first_week_date=None, alarm_minutes=30):
-    """从JSON课表文件生成iCS日历文件，并排除法定节假日
-
-    参数：
-        json_file: JSON课表文件路径
-        first_week_date: 第一周的周一日期，格式为'YYYYMMDD'
-        alarm_minutes: 提前提醒时间(分钟)
-    """
+    """从JSON课表文件生成iCS日历文件，并排除法定节假日"""
     # 加载JSON数据
     with open(json_file, 'r', encoding='utf-8') as f:
         courses = json.load(f)
@@ -254,18 +249,18 @@ def generate_ics_from_json(json_file, first_week_date=None, alarm_minutes=30):
         print("日期格式错误，应为YYYYMMDD")
         return
 
-    # 设置课程时间表
+    # 设置课程时间表 - 每节课的开始和结束时间
     class_timetable = {
         "1": {"startTime": "080000", "endTime": "084000"},
         "2": {"startTime": "085000", "endTime": "093000"},
         "3": {"startTime": "100000", "endTime": "104000"},
         "4": {"startTime": "105000", "endTime": "113000"},
-        "5": {"startTime": "143000", "endTime": "151000"},
-        "6": {"startTime": "152000", "endTime": "160000"},
-        "7": {"startTime": "161000", "endTime": "165000"},
-        "8": {"startTime": "170000", "endTime": "174000"},
-        "9": {"startTime": "190000", "endTime": "194000"},
-        "10": {"startTime": "195000", "endTime": "203000"},
+        "5": {"startTime": "133000", "endTime": "141000"},
+        "6": {"startTime": "142000", "endTime": "150000"},
+        "7": {"startTime": "153000", "endTime": "161000"},
+        "8": {"startTime": "162000", "endTime": "170000"},
+        "9": {"startTime": "180000", "endTime": "184000"},
+        "10": {"startTime": "185000", "endTime": "193000"},
     }
 
     # 设置提醒时间
@@ -368,10 +363,11 @@ END:VTIMEZONE
                 else:
                     extra_status = f'2;BYDAY={weekdays[day - 1]}'
 
-                # 获取课程开始和结束时间
-                start_section = str(sections[0])
-                end_section = str(sections[1] - 1)
+                # 获取课程开始和结束时间 - 修改这部分以正确处理连续两节课
+                start_section = str(sections[0])  # 课程开始节次
+                end_section = str(sections[1])  # 课程结束节次
 
+                # 使用开始节次的开始时间和结束节次的结束时间
                 final_stime_str = first_time_obj.strftime("%Y%m%d") + "T" + class_timetable[start_section]["startTime"]
                 final_etime_str = first_time_obj.strftime("%Y%m%d") + "T" + class_timetable[end_section]["endTime"]
 

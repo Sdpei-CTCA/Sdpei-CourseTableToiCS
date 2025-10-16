@@ -3,8 +3,10 @@ import json
 import uuid
 import logging
 import sys
+import os
+from pathlib import Path
 import traceback
-from chinese_calendar import is_holiday
+from chinese_calendar import get_holiday_detail
 from datetime import datetime, timedelta
 from datetime import timezone
 from bs4 import BeautifulSoup
@@ -19,6 +21,23 @@ from webdriver_manager.microsoft import EdgeChromiumDriverManager
 # 配置日志
 logging.basicConfig(filename='error_log.txt', level=logging.ERROR)
 
+def init_edge_driver(options):
+    # 1) 优先使用本地驱动（无需联网）
+    local_driver = Path("drivers/msedgedriver.exe")
+    if local_driver.exists():
+        print("使用本地 EdgeDriver")
+        return webdriver.Edge(service=Service(str(local_driver)), options=options)
+
+    # 2) 再尝试 webdriver_manager（先走本地缓存）
+    os.environ.setdefault("WDM_LOCAL", "1")  # 仅使用本地缓存；无缓存会抛错
+    try:
+        print("尝试使用 webdriver_manager")
+        return webdriver.Edge(service=Service(EdgeChromiumDriverManager().install()), options=options)
+    except Exception as e:
+        raise RuntimeError(
+            "无法获取 EdgeDriver（可能离线或被防火墙/代理拦截）。"
+            "请手动下载与 Edge 版本匹配的 `msedgedriver.exe` 放到 `drivers\\` 目录后重试。\n原始错误: " + str(e)
+        )
 
 def uid():
     """生成唯一标识符"""
@@ -35,6 +54,9 @@ def format_building_name(building_name):
     # 可以添加其他前缀的处理逻辑
     return building_name
 
+def is_statutory_holiday(d):
+    _, holiday = get_holiday_detail(d)
+    return holiday is not None
 
 def save_courses_to_json(courses, filename='courses.json'):
     """将课程信息保存为JSON格式"""
@@ -348,7 +370,7 @@ END:VTIMEZONE
                     class_date = first_time_obj + timedelta(days=7 * week_delta)
 
                     # 检查是否为法定节假日
-                    if is_holiday(class_date):
+                    if is_statutory_holiday(class_date):
                         # 生成EXDATE格式的日期字符串
                         exclude_date = class_date.strftime("%Y%m%dT") + class_timetable[str(sections[0])]["startTime"]
                         exclude_dates.append(exclude_date)
@@ -436,10 +458,9 @@ def main():
         # 初始化浏览器
         driver = None
         try:
-            driver = webdriver.Edge(service=Service(EdgeChromiumDriverManager().install()), options=options)
+            driver = init_edge_driver(options)
         except Exception as e:
-            print(f"初始化完成: {e}")
-            print("请重新打开该程序")
+            print(f"初始化失败: {e}")
             input("按回车键退出...")
             return
 
@@ -463,9 +484,9 @@ def main():
         driver.switch_to.window(driver.window_handles[-1])
 
         # 直接访问成绩查询页面
-        print("正在访问个人课表页面...")
+        print("正在访问个人课表页面...(约等待10秒)")
         driver.get(url_kebiao_page)
-
+        time.sleep(5)
         print("正在获取课表信息...")
         html_content = get_course_table_html(driver)
 
